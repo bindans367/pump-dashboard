@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pump Monitor Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ── Reset & base ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g0: #0a1a0d;
+  --g1: #0f2614;
+  --g2: #1a3d1f;
+  --g3: #2d6a35;
+  --g4: #3d8b47;
+  --g5: #52b35e;
+  --g6: #7dd688;
+  --g7: #b6edbd;
+  --g8: #e8f9ea;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --white: #f0faf1;
+  --card: rgba(15,38,20,0.85);
+  --border: rgba(61,139,71,0.25);
+  --radius: 12px;
+  --font: 'Sora', sans-serif;
+  --mono: 'DM Mono', monospace;
+}
+
+html { font-size: 15px; }
+body {
+  font-family: var(--font);
+  background: var(--g0);
+  color: var(--white);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Background grid ──────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(rgba(61,139,71,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61,139,71,0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+}
+
+/* ── Layout ───────────────────────────────────────────── */
+.page { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+
+/* ── Header ───────────────────────────────────────────── */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 24px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  backdrop-filter: blur(12px);
+}
+.logo { display: flex; align-items: center; gap: 12px; }
+.logo-icon {
+  width: 40px; height: 40px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--g3), var(--g5));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+}
+.logo-text h1 { font-size: 1rem; font-weight: 700; color: var(--white); }
+.logo-text p  { font-size: 0.72rem; color: var(--g6); font-weight: 300; }
+
+.header-right { display: flex; align-items: center; gap: 12px; }
+.conn-pill {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.72rem; font-family: var(--mono);
+  padding: 5px 12px; border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.3);
+  transition: all .3s;
+}
+.conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
+.conn-pill.live .conn-dot { background: var(--g5); animation: pulse 2s infinite; }
+.conn-pill.live { border-color: rgba(82,179,94,0.4); }
+
+@keyframes pulse {
+  0%,100% { opacity: 1; } 50% { opacity: 0.4; }
+}
+
+/* ── Pump status banner ───────────────────────────────── */
+.pump-banner {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  padding: 16px 24px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  backdrop-filter: blur(12px);
+  transition: border-color .4s;
+}
+.pump-banner.pump-on  { border-color: rgba(82,179,94,0.6); }
+.pump-banner.pump-off { border-color: rgba(239,68,68,0.4); }
+
+.pump-state { display: flex; align-items: center; gap: 14px; }
+.pump-led {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 4px rgba(239,68,68,0.15);
+  transition: all .4s;
+}
+.pump-led.on {
+  background: var(--g5);
+  box-shadow: 0 0 0 4px rgba(82,179,94,0.2), 0 0 18px rgba(82,179,94,0.4);
+  animation: pulse 1.5s infinite;
+}
+.pump-label { font-size: 1rem; font-weight: 600; }
+.pump-runtime { font-size: 0.75rem; font-family: var(--mono); color: var(--g6); margin-top: 2px; }
+
+.pump-controls { display: flex; gap: 10px; }
+.btn {
+  padding: 9px 20px; border-radius: 8px; border: none;
+  font-family: var(--font); font-size: 0.8rem; font-weight: 600;
+  cursor: pointer; transition: all .2s; letter-spacing: .03em;
+}
+.btn-on  { background: linear-gradient(135deg, var(--g3), var(--g5)); color: #fff; }
+.btn-on:hover  { background: linear-gradient(135deg, var(--g4), var(--g6)); transform: translateY(-1px); }
+.btn-off { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+.btn-off:hover { background: rgba(239,68,68,0.25); transform: translateY(-1px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* ── Grid ─────────────────────────────────────────────── */
+.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* ── Metric cards ─────────────────────────────────────── */
+.metric-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  backdrop-filter: blur(12px);
+  position: relative; overflow: hidden;
+  transition: border-color .3s;
+}
+.metric-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--g3), var(--g5));
+  opacity: 0.6;
+}
+.metric-card.alert-active { border-color: rgba(239,68,68,0.5); }
+.metric-card.alert-active::before { background: linear-gradient(90deg, var(--red), #f87171); }
+
+.metric-icon { font-size: 1.4rem; margin-bottom: 8px; }
+.metric-label { font-size: 0.7rem; color: var(--g6); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+.metric-value { font-size: 1.9rem; font-weight: 700; font-family: var(--mono); color: var(--white); line-height: 1; }
+.metric-unit  { font-size: 0.8rem; color: var(--g6); margin-left: 3px; }
+.metric-status{ font-size: 0.7rem; margin-top: 5px; color: var(--g6); }
+.metric-status.good { color: var(--g5); }
+.metric-status.warn { color: var(--amber); }
+.metric-status.bad  { color: var(--red); }
+
+/* ── Chart card ───────────────────────────────────────── */
+.chart-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  backdrop-filter: blur(12px);
+}
+.card-title { font-size: 0.8rem; font-weight: 600; color: var(--g6); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 14px; }
+.chart-wrap { position: relative; height: 200px; }
+
+/* ── Alert log ────────────────────────────────────────── */
+.alert-log {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  backdrop-filter: blur(12px);
+  margin-bottom: 20px;
+}
+.alert-scroll { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.alert-scroll::-webkit-scrollbar { width: 4px; }
+.alert-scroll::-webkit-scrollbar-track { background: transparent; }
+.alert-scroll::-webkit-scrollbar-thumb { background: var(--g3); border-radius: 2px; }
+
+.alert-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 10px; border-radius: 7px;
+  background: rgba(0,0,0,0.25);
+  border-left: 3px solid var(--g3);
+  font-size: 0.78rem;
+  animation: slideIn .3s ease;
+}
+@keyframes slideIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+.alert-item.DRY_RUN   { border-color: var(--blue); }
+.alert-item.OVERHEAT  { border-color: var(--red); }
+.alert-item.OVERTIME  { border-color: var(--amber); }
+.alert-item.PUMP_ON   { border-color: var(--g5); }
+.alert-item.PUMP_OFF  { border-color: var(--g3); }
+.alert-type { font-family: var(--mono); font-size: 0.68rem; font-weight: 500; white-space: nowrap; }
+.alert-type.DRY_RUN   { color: var(--blue); }
+.alert-type.OVERHEAT  { color: var(--red); }
+.alert-type.OVERTIME  { color: var(--amber); }
+.alert-type.PUMP_ON   { color: var(--g5); }
+.alert-type.PUMP_OFF  { color: var(--g6); }
+.alert-msg  { color: var(--g7); flex: 1; }
+.alert-time { font-family: var(--mono); font-size: 0.65rem; color: var(--g4); white-space: nowrap; }
+.alert-empty { color: var(--g4); font-size: 0.78rem; text-align: center; padding: 20px 0; }
+
+/* ── Last updated ─────────────────────────────────────── */
+.last-update { font-size: 0.7rem; font-family: var(--mono); color: var(--g4); text-align: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">💧</div>
+      <div class="logo-text">
+        <h1>Pump Monitor</h1>
+        <p>Edge-Based Irrigation System</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="conn-pill" id="connPill">
+        <div class="conn-dot"></div>
+        <span id="connLabel">Connecting...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Pump status + controls -->
+  <div class="pump-banner pump-off" id="pumpBanner">
+    <div class="pump-state">
+      <div class="pump-led" id="pumpLed"></div>
+      <div>
+        <div class="pump-label" id="pumpLabel">Pump OFF</div>
+        <div class="pump-runtime" id="pumpRuntime">—</div>
+      </div>
+    </div>
+    <div class="pump-controls">
+      <button class="btn btn-on"  id="btnOn"  onclick="sendRelayCmd('PUMP_ON')">▶ Turn ON</button>
+      <button class="btn btn-off" id="btnOff" onclick="sendRelayCmd('PUMP_OFF')">■ Turn OFF</button>
+    </div>
+  </div>
+
+  <!-- Metric cards -->
+  <div class="grid4">
+    <div class="metric-card" id="cardCurrent">
+      <div class="metric-icon">⚡</div>
+      <div class="metric-label">Motor Current</div>
+      <div class="metric-value"><span id="valCurrent">—</span><span class="metric-unit">A</span></div>
+      <div class="metric-status" id="staCurrent">Waiting...</div>
+    </div>
+    <div class="metric-card" id="cardTemp">
+      <div class="metric-icon">🌡️</div>
+      <div class="metric-label">Temperature</div>
+      <div class="metric-value"><span id="valTemp">—</span><span class="metric-unit">°C</span></div>
+      <div class="metric-status" id="staTemp">Waiting...</div>
+    </div>
+    <div class="metric-card" id="cardHumidity">
+      <div class="metric-icon">💧</div>
+      <div class="metric-label">Humidity</div>
+      <div class="metric-value"><span id="valHumidity">—</span><span class="metric-unit">%</span></div>
+      <div class="metric-status" id="staHumidity">Waiting...</div>
+    </div>
+    <div class="metric-card" id="cardSoil">
+      <div class="metric-icon">🌱</div>
+      <div class="metric-label">Soil Moisture</div>
+      <div class="metric-value"><span id="valSoil">—</span><span class="metric-unit">%</span></div>
+      <div class="metric-status" id="staSoil">Waiting...</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid2">
+    <div class="chart-card">
+      <div class="card-title">Current (A) — last 50 readings</div>
+      <div class="chart-wrap"><canvas id="chartCurrent"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="card-title">Temperature (°C) — last 50 readings</div>
+      <div class="chart-wrap"><canvas id="chartTemp"></canvas></div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="chart-card">
+      <div class="card-title">Soil Moisture (%) — last 50 readings</div>
+      <div class="chart-wrap"><canvas id="chartSoil"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="card-title">Humidity (%) — last 50 readings</div>
+      <div class="chart-wrap"><canvas id="chartHumidity"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Alert log -->
+  <div class="alert-log">
+    <div class="card-title">Alert Log</div>
+    <div class="alert-scroll" id="alertLog">
+      <div class="alert-empty">No alerts yet — waiting for data...</div>
+    </div>
+  </div>
+
+  <div class="last-update">Last update: <span id="lastUpdate">—</span></div>
+
+</div>
+
+<script>
+// ── Ably config ───────────────────────────────────────────────
+const ABLY_KEY     = '9s2Zkg.PSFL3Q:qVW6NB3aSwAD0-RNNc6IwXaQwwSLQ8r65ODSXxWt3SA';
+const CHANNEL_NAME = 'pump';
+
+// ── Chart history ─────────────────────────────────────────────
+const MAX_POINTS = 50;
+const history = { labels:[], current:[], temp:[], soil:[], humidity:[] };
+
+// ── Chart setup ───────────────────────────────────────────────
+const chartDefaults = {
+  type: 'line',
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: false },
+      y: { grid: { color: 'rgba(61,139,71,0.1)' }, ticks: { color: '#7dd688', font: { family: 'DM Mono', size: 10 } } }
+    },
+    elements: { point: { radius: 0 }, line: { tension: 0.4 } }
+  }
+};
+
+function makeChart(id, color, label) {
+  return new Chart(document.getElementById(id), {
+    ...chartDefaults,
+    data: {
+      labels: [],
+      datasets: [{ label, data: [], borderColor: color, borderWidth: 2, fill: true,
+        backgroundColor: color.replace(')', ',0.08)').replace('rgb', 'rgba') }]
+    }
+  });
+}
+
+const charts = {
+  current:  makeChart('chartCurrent',  'rgb(82,179,94)',   'Current A'),
+  temp:     makeChart('chartTemp',     'rgb(239,68,68)',   'Temp °C'),
+  soil:     makeChart('chartSoil',     'rgb(59,130,246)',  'Soil %'),
+  humidity: makeChart('chartHumidity', 'rgb(245,158,11)',  'Humidity %'),
+};
+
+function pushToChart(chart, histArr, value) {
+  const now = new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  history.labels.push(now);
+  histArr.push(value);
+  if (histArr.length > MAX_POINTS) { histArr.shift(); history.labels.shift(); }
+  chart.data.labels         = history.labels;
+  chart.data.datasets[0].data = histArr;
+  chart.update('none');
+}
+
+// ── Alert log ─────────────────────────────────────────────────
+const alerts = [];
+function addAlert(type, msg) {
+  const now = new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  alerts.unshift({ type, msg, time: now });
+  if (alerts.length > 20) alerts.pop();
+  renderAlerts();
+}
+
+function renderAlerts() {
+  const log = document.getElementById('alertLog');
+  if (alerts.length === 0) {
+    log.innerHTML = '<div class="alert-empty">No alerts yet</div>';
+    return;
+  }
+  log.innerHTML = alerts.map(a => `
+    <div class="alert-item ${a.type}">
+      <span class="alert-type ${a.type}">${a.type}</span>
+      <span class="alert-msg">${a.msg}</span>
+      <span class="alert-time">${a.time}</span>
+    </div>`).join('');
+}
+
+// ── Pump runtime counter ──────────────────────────────────────
+let pumpOnSec = 0;
+let runtimeInterval = null;
+function startRuntime(sec) {
+  pumpOnSec = sec;
+  clearInterval(runtimeInterval);
+  runtimeInterval = setInterval(() => {
+    pumpOnSec++;
+    const m = Math.floor(pumpOnSec / 60), s = pumpOnSec % 60;
+    document.getElementById('pumpRuntime').textContent = `Running: ${m}m ${s}s`;
+  }, 1000);
+}
+function stopRuntime() {
+  clearInterval(runtimeInterval);
+  document.getElementById('pumpRuntime').textContent = '—';
+}
+
+// ── Update UI from sensor data ────────────────────────────────
+let prevAlerts = { dry: false, over: false, heat: false };
+
+function updateUI(d) {
+  // Pump status
+  const isOn = d.pump === true || d.pump === 'true';
+  const banner = document.getElementById('pumpBanner');
+  const led    = document.getElementById('pumpLed');
+  const label  = document.getElementById('pumpLabel');
+  banner.className = 'pump-banner ' + (isOn ? 'pump-on' : 'pump-off');
+  led.className    = 'pump-led'    + (isOn ? ' on' : '');
+  label.textContent = isOn ? 'Pump ON' : 'Pump OFF';
+
+  if (isOn && d.pump_on_sec !== undefined) startRuntime(d.pump_on_sec);
+  else stopRuntime();
+
+  // Current
+  const cur = parseFloat(d.current_a);
+  document.getElementById('valCurrent').textContent = isNaN(cur) ? '—' : cur.toFixed(2);
+  const staCur = document.getElementById('staCurrent');
+  if (isNaN(cur)) { staCur.textContent = '—'; staCur.className = 'metric-status'; }
+  else if (cur < 0.3) { staCur.textContent = 'Low / Off'; staCur.className = 'metric-status warn'; }
+  else { staCur.textContent = 'Normal'; staCur.className = 'metric-status good'; }
+  if (!isNaN(cur)) pushToChart(charts.current, history.current, cur);
+
+  // Temperature
+  const temp = parseFloat(d.temp_c);
+  document.getElementById('valTemp').textContent = isNaN(temp) ? '—' : temp.toFixed(1);
+  const staTemp = document.getElementById('staTemp');
+  if (isNaN(temp)) { staTemp.textContent = '—'; staTemp.className = 'metric-status'; }
+  else if (temp >= 55) { staTemp.textContent = '⚠ Overheat!'; staTemp.className = 'metric-status bad'; document.getElementById('cardTemp').classList.add('alert-active'); }
+  else if (temp >= 45) { staTemp.textContent = 'Warm'; staTemp.className = 'metric-status warn'; document.getElementById('cardTemp').classList.remove('alert-active'); }
+  else { staTemp.textContent = 'Normal'; staTemp.className = 'metric-status good'; document.getElementById('cardTemp').classList.remove('alert-active'); }
+  if (!isNaN(temp)) pushToChart(charts.temp, history.temp, temp);
+
+  // Humidity
+  const hum = parseFloat(d.humidity);
+  document.getElementById('valHumidity').textContent = isNaN(hum) ? '—' : Math.round(hum);
+  const staHum = document.getElementById('staHumidity');
+  staHum.textContent = isNaN(hum) ? '—' : (hum > 80 ? 'High' : hum < 30 ? 'Low' : 'Normal');
+  staHum.className   = 'metric-status ' + (isNaN(hum) ? '' : (hum > 80 || hum < 30 ? 'warn' : 'good'));
+  if (!isNaN(hum)) pushToChart(charts.humidity, history.humidity, hum);
+
+  // Soil
+  const soil = parseInt(d.soil_pct);
+  document.getElementById('valSoil').textContent = isNaN(soil) ? '—' : soil;
+  const staSoil = document.getElementById('staSoil');
+  if (isNaN(soil)) { staSoil.textContent = '—'; staSoil.className = 'metric-status'; }
+  else if (soil < 20) { staSoil.textContent = 'Very Dry'; staSoil.className = 'metric-status bad'; }
+  else if (soil < 40) { staSoil.textContent = 'Dry'; staSoil.className = 'metric-status warn'; }
+  else if (soil > 80) { staSoil.textContent = 'Saturated'; staSoil.className = 'metric-status warn'; }
+  else { staSoil.textContent = 'Adequate'; staSoil.className = 'metric-status good'; }
+  if (!isNaN(soil)) pushToChart(charts.soil, history.soil, soil);
+
+  // Fault alerts — only fire once per transition
+  if (d.alert_dry  && !prevAlerts.dry)  { addAlert('DRY_RUN',  'Motor running — no water detected. Relay cut.'); document.getElementById('cardCurrent').classList.add('alert-active'); }
+  if (!d.alert_dry) { document.getElementById('cardCurrent').classList.remove('alert-active'); }
+  if (d.alert_heat && !prevAlerts.heat) { addAlert('OVERHEAT',  `Temperature ${temp}°C — relay cut.`); }
+  if (d.alert_over && !prevAlerts.over) { addAlert('OVERTIME',  'Pump running beyond limit — check field.'); }
+  prevAlerts = { dry: !!d.alert_dry, over: !!d.alert_over, heat: !!d.alert_heat };
+
+  // Last update
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('en-IN');
+}
+
+// ── Ably connection ───────────────────────────────────────────
+let channel = null;
+
+function setConnected(yes) {
+  const pill  = document.getElementById('connPill');
+  const label = document.getElementById('connLabel');
+  pill.className  = 'conn-pill' + (yes ? ' live' : '');
+  label.textContent = yes ? 'Live' : 'Connecting...';
+}
+
+function sendRelayCmd(cmd) {
+  if (!channel) return;
+  channel.publish('relay', { cmd });
+  addAlert(cmd === 'PUMP_ON' ? 'PUMP_ON' : 'PUMP_OFF',
+           cmd === 'PUMP_ON' ? 'Pump turned ON from dashboard.' : 'Pump turned OFF from dashboard.');
+}
+
+(function initAbly() {
+  const ably = new Ably.Realtime({ key: ABLY_KEY });
+
+  ably.connection.on('connected',    () => setConnected(true));
+  ably.connection.on('disconnected', () => setConnected(false));
+  ably.connection.on('failed',       () => setConnected(false));
+
+  channel = ably.channels.get(CHANNEL_NAME);
+
+  // Subscribe to all messages on the pump channel
+  channel.subscribe((msg) => {
+    const data = msg.data;
+    if (!data) return;
+
+    // Sensor data push from ESP32
+    if (data.current_a !== undefined || data.temp_c !== undefined) {
+      updateUI(data);
+    }
+
+    // Relay command echo / confirmation
+    if (data.cmd) {
+      addAlert(data.cmd, data.cmd === 'PUMP_ON' ? 'Command received: Pump ON' : 'Command received: Pump OFF');
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
